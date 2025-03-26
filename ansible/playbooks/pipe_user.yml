@@ -1,0 +1,67 @@
+# Pipe user that runs all services
+# sudo ansible-playbook -i localhost, --connection=local playbooks/pipe_user.yml
+---
+- name: Create user with sudo privileges
+  hosts: localhost
+  gather_facts: yes
+  become: yes
+  vars_files:
+    - group_vars/users.yml
+  tasks:
+    - name: Ensure user exists
+      user:
+        name: "{{ pipe_user }}"
+        state: present
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Add user to sudo group
+      user:
+        name: "{{ pipe_user }}"
+        groups: sudo
+        append: yes
+
+    - name: Allow user to use sudo without password
+      lineinfile:
+        path: "/etc/sudoers.d/{{ pipe_user }}"
+        line: "{{ pipe_user }} ALL=(ALL) NOPASSWD:ALL"
+        create: yes
+        validate: 'visudo -cf %s'
+
+    - name: Ensure correct permissions on the pipe user's home directory
+      file:
+        path: "/home/{{ pipe_user }}"
+        owner: "{{ pipe_user }}"
+        group: "{{ pipe_user }}"
+        mode: '0755'
+        state: directory
+
+    - name: Set full permissions for all files and directories inside the home directory
+      file:
+        path: "/home/{{ pipe_user }}/{{ item }}"
+        owner: "{{ pipe_user }}"
+        group: "{{ pipe_user }}"
+        mode: '0700'
+        state: file
+      loop: "{{ lookup('fileglob', '/home/{{ pipe_user }}/*', wantlist=True) }}"
+      when: ansible_facts['ansible_os_family'] == 'Debian'
+
+- name: Run tasks as the user
+  hosts: localhost
+  become: yes
+  become_method: enable
+  become_user: "{{ pipe_user }}"
+  vars_files:
+    - group_vars/users.yml
+  tasks:
+    - name: Verify user switch
+      command: whoami
+      register: user_check
+
+    - name: Print current user
+      debug:
+        msg: "Current user is {{ user_check.stdout }}"
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes

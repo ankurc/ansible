@@ -1,0 +1,65 @@
+# Install Jenkins Ingress on kubernetes cluster.
+---
+- name: Sets variable that are available to subsequent plays, and can be cached
+  set_fact:
+    jenkins_namespace: "jenkins"
+    jenkins_docker_image: "jenkins/jenkins:lts"
+    jenkins_port: 8080
+    jenkins_node_port: 31921
+    jenkins_data: "/mnt/jenkins-data"
+    storage_class_name: "local-storage"
+
+- name: Check if Ingress service exists in Kubernetes
+  command: kubectl -n ingress-nginx get svc ingress-nginx-controller
+  register: jenkins_ingress_service_check
+  changed_when: false
+  failed_when: jenkins_ingress_service_check.rc > 1 # 0=found, 1=not found, >1=other error
+
+- name: Install ingress-nginx Helm chart with tolerations
+  command: >-
+    helm upgrade --install ingress-nginx ingress-nginx 
+    --repo https://kubernetes.github.io/ingress-nginx 
+    --namespace ingress-nginx --create-namespace
+  when: jenkins_ingress_service_check.rc != 0
+
+  register: helm_install
+  changed_when: "'\"ingress-nginx\" already exists' not in helm_install.stderr"
+
+- name: Verify ingress-nginx pods are running
+  command: kubectl get pods -n ingress-nginx -o jsonpath='{.items[*].status.phase}'
+  register: ingress_pods_status
+  until: "'Running' in ingress_pods_status.stdout"
+  retries: 10
+  delay: 10
+  failed_when: "'Running' not in ingress_pods_status.stdout"
+
+- name: Display ingress-nginx status  
+  debug:
+    msg: "ingress-nginx pods are running"
+
+- name: Create Jenkins Ingress
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: jenkins-ingress-nodeport
+        namespace: "{{ jenkins_namespace }}" 
+        annotations:
+          # Add any necessary annotations for your Ingress controller
+          # Example for Nginx Ingress Controller:
+          kubernetes.io/ingress.class: "nginx"
+      spec:
+        rules:
+        - host: jenkins.local # Or any hostname you prefer
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: jenkins # Replace with your Jenkins service name
+                  port:
+                    number: "{{ jenkins_node_port }}" # Use the NodePort

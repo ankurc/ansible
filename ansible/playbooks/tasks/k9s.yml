@@ -1,0 +1,45 @@
+# Install k9s
+---
+- name: Get latest k9s release URL
+  uri:
+    url: "https://api.github.com/repos/derailed/k9s/releases/latest"
+    return_content: yes
+    status_code: 200
+  register: latest_release
+
+- name: Set k9s download URL
+  set_fact:
+    k9s_download_url: "{{ (latest_release.json.assets | selectattr('name', 'match', 'k9s_Linux_amd64.tar.gz') | first | default({}))['browser_download_url'] | default('') }}"
+
+- name: Fail if download URL is empty
+  fail:
+    msg: "Failed to retrieve k9s download URL"
+  when: k9s_download_url == ''
+
+- name: Download k9s binary
+  get_url:
+    url: "{{ k9s_download_url }}"
+    dest: /tmp/k9s.tar.gz
+    mode: '0644'
+
+- name: Create k9s install directory
+  file:
+    path: /usr/local/bin/ # or your desired install location.
+    state: directory
+    mode: '0755'
+
+- name: Extract k9s binary
+  unarchive:
+    src: /tmp/k9s.tar.gz
+    dest: /usr/local/bin/
+    remote_src: yes
+
+- name: Rename k9s binary
+  command: mv /usr/local/bin/k9s_* /usr/local/bin/k9s
+  changed_when: true
+  ignore_errors: true #added ignore_errors to prevent playbook from crashing.
+
+- name: Remove temporary archive
+  file:
+    path: /tmp/k9s.tar.gz
+    state: absent

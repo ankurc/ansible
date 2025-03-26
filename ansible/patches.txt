@@ -1,0 +1,9 @@
+patch mount path
+
+kubectl patch deployment jenkins -n jenkins --type='json' -p='[
+    {
+        "op": "replace",
+        "path": "/spec/template/spec/containers/0/volumeMounts/0/mountPath",
+        "value": "/var/jenkins_home"
+    }
+]'

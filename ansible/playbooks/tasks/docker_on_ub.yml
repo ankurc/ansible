@@ -1,0 +1,45 @@
+# Install docker on a ubuntu/debian vm.
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install Docker dependencies
+  apt:
+    pkg:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: Add Docker GPG key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker repository
+  apt_repository:
+    repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+    state: present
+
+- name: Update apt cache (again)
+  become: yes  # Ensure this task runs with sudo privileges  
+  apt:
+    update_cache: yes
+
+- name: Install Docker
+  apt:
+    pkg:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+
+- name: Add user to docker group
+  user:
+    name: "{{ pipe_user }}"
+    append: yes
+    groups: docker

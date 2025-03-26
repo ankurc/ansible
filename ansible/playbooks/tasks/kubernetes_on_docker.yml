@@ -1,0 +1,108 @@
+# Install kubernetes cluster on a debain/ubuntu vm running docker.
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install Kubernetes dependencies
+  apt:
+    pkg:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+      - gnupg-agent
+      - software-properties-common
+    state: present
+
+- name: Download Kubernetes Signing Key
+  ansible.builtin.get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+  register: downloaded_key
+
+- name: Import Kubernetes Signing Key
+  ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-release.key
+  when: downloaded_key.changed
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes APT Repository
+  ansible.builtin.apt_repository:
+    repo: deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /
+    state: present
+    filename: kubernetes
+
+- name: Update apt cache (again)
+  apt:
+    update_cache: yes
+
+- name: Install containerd
+  apt:
+    name: containerd.io
+    state: present
+
+- name: Create containerd directory
+  file:
+    path: /etc/containerd
+    state: directory
+
+- name: Add containerd configuration
+  shell: /usr/bin/containerd config default > /etc/containerd/config.toml
+
+- name: Configuring Systemd cgroup driver for containerd
+  lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: "SystemdCgroup = false"
+    line: "SystemdCgroup = true"
+
+- name: Enable the containerd service and start service
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+    daemon-reload: yes
+
+- name: Install Kubernetes components
+  apt:
+    pkg:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Load br_netfilter kernel module
+  modprobe:
+    name: br_netfilter
+    state: present
+
+- name: Set bridge-nf-call-iptables
+  sysctl:
+    name: net.bridge.bridge-nf-call-iptables
+    value: 1
+
+- name: Set ip_forward
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: 1
+
+- name: Initialize Kubernetes cluster (master node)
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16
+
+- name: Create .kube directory (master node)
+  file:
+    path: "/home/{{ pipe_user }}/.kube"
+    state: directory
+    mode: '0755'
+
+- name: Copy Kubernetes config (master node)
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ pipe_user }}/.kube/config"
+    remote_src: yes
+    owner: "{{ pipe_user }}"
+    group: "{{ pipe_user }}"
+
+- name: Install Flannel network (master node)
+  command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml

@@ -1,0 +1,36 @@
+# install helm
+---
+- name: Download Helm binary
+  get_url:
+    url: "https://get.helm.sh/helm-v3.17.2-linux-amd64.tar.gz" # Replace with the desired version
+    dest: /tmp/helm.tar.gz
+    mode: '0644'
+
+- name: Create Helm install directory
+  file:
+    path: /usr/local/bin
+    state: directory
+    mode: '0755'
+
+- name: Extract Helm binary
+  unarchive:
+    src: /tmp/helm.tar.gz
+    dest: /usr/local/bin
+    remote_src: yes
+
+- name: Rename Helm binary
+  command: mv /usr/local/bin/linux-amd64/helm /usr/local/bin/helm
+  changed_when: true
+
+- name: Remove temporary archive and directory
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/helm.tar.gz
+    - /usr/local/bin/linux-amd64
+
+- name: Set Helm executable permissions
+  file:
+    path: /usr/local/bin/helm
+    mode: '0755'

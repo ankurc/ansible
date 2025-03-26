@@ -1,0 +1,104 @@
+# Install Jenkins on a standlaone ubuntu/debain vm.
+---
+- name: Sets variable that are available to subsequent plays, and can be cached
+  set_fact:
+    jenkins_port: 8080
+    nginx_port: 80
+    nginx_server_name: jenkins.local # Replace with your desired server name
+    jenkins_war_url: "https://get.jenkins.io/war-stable/latest/jenkins.war"
+    jenkins_data: "/mnt/jenkins-data"
+    nginx_config_file: /etc/nginx/sites-available/jenkins
+    nginx_enabled_site: /etc/nginx/sites-enabled/jenkins
+
+- name: Update apt cache and install required packages (Debian/Ubuntu)
+  apt:
+    update_cache: yes
+    name: "{{ item }}"
+    state: present
+  loop:
+    - openjdk-21-jdk
+    - nginx
+    - wget
+    - unzip #required later for plugin installation
+
+- name: Create Jenkins user
+  user:
+    name: jenkins
+    create_home: yes
+    shell: /bin/bash
+    system: yes
+  ignore_errors: true # In case it already exists
+
+- name: Create Jenkins home directory
+  file:
+    path: "{{ jenkins_data }}"
+    state: directory
+    owner: jenkins
+    group: jenkins
+    mode: '0755'
+  ignore_errors: true # In case it already exists
+
+- name: Download Jenkins WAR file
+  get_url:
+    url: "{{ jenkins_war_url }}"
+    dest: "{{ jenkins_data }}/jenkins.war"
+    mode: '0644'
+    force: yes #ensures redownload if needed.
+
+- name: Create Jenkins systemd service file
+  copy:
+    content: |
+      [Unit]
+      Description=Jenkins Continuous Integration Server
+      After=network.target
+
+      [Service]
+      Type=simple
+      User="{{ pipe_user }}"
+      Group="{{ pipe_user }}"
+      Environment="JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64"
+      ExecStart=/usr/bin/java -jar {{ jenkins_data }}/jenkins.war --httpPort={{ jenkins_port }}
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/jenkins.service
+    mode: '0644'
+
+- name: Start and enable Jenkins service
+  systemd:
+    name: jenkins
+    state: restarted #Use restarted to ensure the service is running after changes. Use started if it is only the first run.
+    enabled: yes
+
+- name: Configure Nginx as a reverse proxy for Jenkins
+  copy:
+    content: |
+      server {
+          listen {{ nginx_port }};
+          server_name {{ nginx_server_name }};
+
+          location / {
+              proxy_pass http://localhost:{{ jenkins_port }};
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+    dest: "{{ nginx_config_file }}"
+    mode: '0644'
+
+- name: Enable Nginx site
+  file:
+    src: "{{ nginx_config_file }}"
+    dest: "{{ nginx_enabled_site }}"
+    state: link
+  notify:
+    - Restart Nginx
+
+handlers:
+- name: Restart Nginx
+  service:
+    name: nginx
+    state: restarted

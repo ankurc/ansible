@@ -1,0 +1,72 @@
+# sudo ansible-playbook -i localhost, --connection=local playbooks/Jenkins.yml
+---
+- hosts: localhost # or your target hosts
+  gather_facts: yes  
+  become: yes
+  become_user: "{{ pipe_user }}"
+  become_method: enable
+  vars_files:
+    - group_vars/users.yml
+  environment:
+    KUBECONFIG: "/home/{{ pipe_user }}/.kube/config"
+  tasks:
+    - name: Verify user switch
+      command: whoami
+      register: user_check
+
+    - name: Print current user
+      debug:
+        msg: "Current user is {{ user_check.stdout }}"
+
+    - name: Check if Docker is installed
+      command: which docker
+      register: docker_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Include Docker installation tasks if not installed
+      include_tasks: tasks/docker_on_ub.yml
+      when: docker_check.rc != 0
+
+    - name: Check if Kubernetes/kubectl is installed
+      command: which kubectl
+      register: kubectl_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Include Kubernetes installation tasks if not installed
+      include_tasks: tasks/kubernetes_on_docker.yml
+      when: kubectl_check.rc != 0
+
+    - name: Check if helm is installed
+      command: which helm
+      register: helm_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Include Helm installation tasks if not installed
+      include_tasks: tasks/helm.yml
+      when: helm_check.rc != 0
+
+    - name: Check if k9s is installed
+      command: which k9s
+      register: k9s_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Include k9s installation tasks if not installed
+      include_tasks: tasks/k9s.yml
+      when: helm_check.rc != 0
+
+    - name: Check if Jenkins service exists in Kubernetes
+      command: kubectl get svc -n jenkins jenkins
+      register: jenkins_service_check
+      changed_when: false
+      failed_when: jenkins_service_check.rc > 1 # 0=found, 1=not found, >1=other error
+
+    - name: Include Jenkins installation tasks if service not found
+      include_tasks: tasks/jenkins_on_kubernetes.yml
+      when: jenkins_service_check.rc != 0
+
+    # - name: Include Jenkins ingress tasks
+    #   include_tasks: tasks/jenkins_ingress.yml

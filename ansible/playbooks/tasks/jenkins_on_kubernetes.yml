@@ -1,0 +1,221 @@
+# Install Jenkins on kubernetes cluster.
+---
+- name: Sets variable that are available to subsequent plays, and can be cached
+  set_fact:
+    jenkins_namespace: "jenkins"
+    jenkins_docker_image: "jenkins/jenkins:lts"
+    jenkins_port: 8080
+    jenkins_node_port: 31921
+    jenkins_data: "/mnt/jenkins-data"
+    mount_path: "/var/jenkins_home"
+    storage_class_name: "local-storage"
+
+- name: Get hostname
+  command: hostname
+  register: hostname
+
+- name: Ensure storage directory exists
+  file:
+    path: "{{ jenkins_data }}"
+    state: directory
+    mode: "0777"
+
+- name: Install Python Libs
+  apt:
+    pkg:
+      - python3-pip
+      - python3-kubernetes
+
+- name: Check if Jenkins namespace exists
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ jenkins_namespace }}"
+    validate_certs: no
+  register: namespace_check
+
+- name: Create Jenkins namespace if it does not exist
+  kubernetes.core.k8s:
+    name: "{{ jenkins_namespace }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+    validate_certs: no
+  when: namespace_check.resources | length == 0
+
+- name: Check if Local StorageClass exists
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+    name: "{{ storage_class_name }}"
+    validate_certs: no
+  register: storage_class_check
+
+- name: Create Local StorageClass if it does not exist
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      api_version: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+        name: "{{ storage_class_name }}"
+      provisioner: kubernetes.io/no-provisioner
+      volumeBindingMode: Immediate
+  when: storage_class_check.resources | length == 0
+
+- name: Delete existing Jenkins PersistentVolume if it exists
+  kubernetes.core.k8s:
+    state: absent
+    api_version: v1
+    kind: PersistentVolume
+    name: jenkins-pv
+    validate_certs: no
+  ignore_errors: yes
+
+- name: Create Jenkins PersistentVolume
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      apiVersion: v1
+      kind: PersistentVolume
+      metadata:
+        name: jenkins-pv
+      spec:
+        capacity:
+          storage: 8Gi
+        accessModes:
+          - ReadWriteOnce
+        persistentVolumeReclaimPolicy: Retain
+        storageClassName: "{{ storage_class_name }}"
+        local:
+          path: "{{ jenkins_data }}"
+        nodeAffinity:
+          required:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - "{{ hostname.stdout }}"
+
+- name: Create Jenkins PersistentVolumeClaim
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: jenkins-pvc
+        namespace: "{{ jenkins_namespace }}"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 8Gi
+        storageClassName: "{{ storage_class_name }}"
+
+- name: Create Jenkins Deployment
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: jenkins
+        namespace: "{{ jenkins_namespace }}"
+        labels:
+          app: jenkins
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: jenkins
+        template:
+          metadata:
+            labels:
+              app: jenkins
+          spec:
+            tolerations:
+            - key: "node-role.kubernetes.io/control-plane"
+              operator: "Exists"
+              effect: "NoSchedule"
+            containers:
+            - name: jenkins
+              image: "{{ jenkins_docker_image }}"
+              ports:
+              - containerPort: "{{ jenkins_port }}"
+              volumeMounts:
+              - name: jenkins-home
+                mountPath: "{{ mount_path }}"
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "500m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1000m"
+            volumes:
+            - name: jenkins-home
+              persistentVolumeClaim:
+                claimName: jenkins-pvc
+
+- name: Create Jenkins Service
+  kubernetes.core.k8s:
+    state: present
+    validate_certs: no
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: jenkins
+        namespace: "{{ jenkins_namespace }}"
+      spec:
+        type: NodePort
+        ports:
+        - port: "{{ jenkins_port }}"
+          targetPort: "{{ jenkins_port }}"
+          nodePort: "{{ jenkins_node_port }}"
+          protocol: TCP
+        selector:
+          app: jenkins
+
+- name: Wait for Jenkins pod to be ready
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: "{{ jenkins_namespace }}"
+    label_selectors:
+      - "app=jenkins"
+    validate_certs: no
+  register: jenkins_pod
+  until: >
+    jenkins_pod.resources is defined and 
+    jenkins_pod.resources | length > 0 and 
+    jenkins_pod.resources[0].status.phase == "Running"
+  retries: 30
+  delay: 10
+
+- name: Get Jenkins service information
+  kubernetes.core.k8s_info:
+    kind: Service
+    namespace: "{{ jenkins_namespace }}"
+    name: jenkins
+    validate_certs: no
+  register: jenkins_service
+
+- name: Display Jenkins access information
+  debug:
+    msg: |
+      Jenkins is deployed!
+      {% if jenkins_service.resources[0].status.loadBalancer.ingress is defined and jenkins_service.resources[0].status.loadBalancer.ingress %}
+      URL: http://{{ jenkins_service.resources[0].status.loadBalancer.ingress[0].ip }}:{{ jenkins_port }}
+      {% else %}
+      URL: LoadBalancer IP not yet assigned. Check 'kubectl get svc -n {{ jenkins_namespace }}' later.
+      {% endif %}
+      Initial Admin Password: Use 'kubectl exec' to get it from the pod
+      To get password: kubectl -n {{ jenkins_namespace }} exec -it <pod-name> -- cat {{ jenkins_data }}/secrets/initialAdminPassword
+      Note: It may take a few minutes for the LoadBalancer IP to be available
