@@ -7,7 +7,7 @@ pipeline {
                 spec:
                   containers:
                   - name: python
-                    image: python:3.13-slim-bullseye
+                    image: python:3.10-slim-bullseye
                     command:
                     - sleep
                     args:
@@ -27,6 +27,7 @@ pipeline {
             steps {
                 sh 'apt-get update && apt-get install -y make'
                 sh 'make test'
+                sh 'python --version'
             }
         }
     }
