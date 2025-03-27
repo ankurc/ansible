@@ -26,7 +26,7 @@ pipeline {
         stage('Unit Test') {
             steps {
                 container ('python') {
-                    python --version
+                    sh 'python --version'
             }
         }
     }
