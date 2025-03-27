@@ -1,11 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        KUBE_CONFIG = credentials('kubeconfig') // Kubernetes credentials
-        GITHUB_CREDENTIALS = credentials('github-token')
-    }
-
     stages {
 
         stage('Build & Test') {
