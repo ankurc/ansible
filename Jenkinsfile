@@ -25,9 +25,8 @@ pipeline {
     stages {
         stage('Unit Test') {
             steps {
-                sh 'apt-get update && apt-get install -y make'
-                sh 'make --version'
-                sh 'python --version'
+                container ('python') {
+                    python --version
             }
         }
     }
