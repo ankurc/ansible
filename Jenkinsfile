@@ -4,6 +4,12 @@ pipeline {
     stages {
 
         stage('Build & Test') {
+            agent {
+                docker {
+                    image 'python:3.10-slim-bullseye'
+                    reuseNode true
+                }
+            }
             steps {
                 script {
                     def branchName = env.BRANCH_NAME
