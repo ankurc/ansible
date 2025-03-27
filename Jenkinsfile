@@ -4,15 +4,12 @@ pipeline {
     stages {
 
         stage('Build & Test') {
-            agent {
-                docker {
-                    image 'python:3.10-slim-bullseye'
-                    reuseNode true
-                }
-            }
+            agent any
             steps {
                 script {
                     def branchName = env.BRANCH_NAME
+                    sh 'apt-get update && apt-get install -y make'
+                    sh 'make --version'
                     sh 'make build'  // Adjust build command
                     sh 'make test'   // Adjust test command
                     
