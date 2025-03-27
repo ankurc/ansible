@@ -7,12 +7,16 @@ pipeline {
                 spec:
                   containers:
                   - name: python
-                    image: python:3.10-slim-bullseye
+                    image: python:3.13-slim-bullseye
                     command:
                     - sleep
                     args:
                     - infinity
                     tty: true
+                  tolerations:
+                  - key: "node-role.kubernetes.io/control-plane"
+                    operator: "Exists"
+                    effect: "NoSchedule"
             '''
             defaultContainer 'python'
         }
@@ -25,6 +29,5 @@ pipeline {
                 sh 'make test'
             }
         }
-        // Add other stages as needed
     }
 }
